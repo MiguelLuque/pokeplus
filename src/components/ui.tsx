@@ -1,7 +1,12 @@
 import {useState, type ReactNode} from 'react';
 import {spriteUrl, baseSpriteUrl, typesOf, TYPE_COLORS, TYPE_ES, ALL_SPECIES} from '../lib/data';
 
+/** El estado (URL de respaldo, oculto) depende del nombre: con `key` se reinicia al cambiar de Pokémon. */
 export function Sprite({name, size = 56}: {name: string; size?: number}) {
+  return <SpriteImg key={name} name={name} size={size} />;
+}
+
+function SpriteImg({name, size}: {name: string; size: number}) {
   const [src, setSrc] = useState(spriteUrl(name));
   const [hidden, setHidden] = useState(false);
   if (hidden) return <div className="sprite placeholder" style={{width: size, height: size}}>{name.slice(0, 2)}</div>;
