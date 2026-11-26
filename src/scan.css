@@ -58,9 +58,13 @@ details.fold[open] > summary::before { content: '▾ '; }
 .input.small { padding: 4px 8px; font-size: .8rem; }
 
 @media (max-width: 560px) {
-  .quick { flex-direction: column; }
+  .quick { flex-wrap: wrap; }
+  .quick .btn.big { flex: 1; justify-content: center; }
   .drop:not(.has-msg) { display: none; }
+  .drop { flex-basis: 100%; }
   .plan-grid { grid-template-columns: 1fr; }
   .big-mon .sprite { width: 52px; height: 52px; }
 }
 .lead-tag { font-size: .68rem; font-weight: 600; color: #001; background: var(--warn); border-radius: 6px; padding: 0 5px; margin-left: 6px; vertical-align: middle; }
+.drop-overlay { position: fixed; inset: 0; z-index: 50; background: #0f1220cc; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.drop-overlay span { border: 3px dashed var(--accent2); border-radius: 16px; padding: 28px 36px; font-size: 1.2rem; font-weight: 700; background: var(--panel); }

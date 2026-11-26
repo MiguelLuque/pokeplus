@@ -72,15 +72,51 @@ export function RivalPage({ds, myTeam, setMyTeam, names, setNames, battleOwn, se
     }
   }
 
-  // pegar (Ctrl+V / Cmd+V) una captura en cualquier parte de la página
+  // pegar (Ctrl+V / Cmd+V) o arrastrar una captura en cualquier parte de la página
+  const [dragging, setDragging] = useState(false);
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {
       const file = [...(e.clipboardData?.items ?? [])].find(i => i.type.startsWith('image/'))?.getAsFile();
       if (file) { e.preventDefault(); onFile(file); }
     };
+    const hasFiles = (e: DragEvent) => [...(e.dataTransfer?.types ?? [])].includes('Files');
+    const onOver = (e: DragEvent) => { if (hasFiles(e)) { e.preventDefault(); setDragging(true); } };
+    const onLeave = (e: DragEvent) => { if (!e.relatedTarget) setDragging(false); };
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      setDragging(false);
+      const file = [...(e.dataTransfer?.files ?? [])].find(f => f.type.startsWith('image/'));
+      if (file) onFile(file);
+      else setScan(x => ({...x, msg: 'Eso no es una imagen. Arrastra la captura de la pantalla de selección.'}));
+    };
     window.addEventListener('paste', onPaste);
-    return () => window.removeEventListener('paste', onPaste);
+    window.addEventListener('dragover', onOver);
+    window.addEventListener('dragleave', onLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('paste', onPaste);
+      window.removeEventListener('dragover', onOver);
+      window.removeEventListener('dragleave', onLeave);
+      window.removeEventListener('drop', onDrop);
+    };
   });
+
+  /** Botón «Pegar»: lee la imagen del portapapeles (móvil y escritorio, si el navegador lo permite). */
+  async function pasteFromClipboard() {
+    try {
+      if (!navigator.clipboard?.read) throw new Error('no-api');
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find(t => t.startsWith('image/'));
+        if (type) { onFile(new File([await item.getType(type)], 'captura.png', {type})); return; }
+      }
+      setScan(x => ({...x, msg: 'No hay ninguna imagen en el portapapeles. Copia la captura y vuelve a pulsar «Pegar».'}));
+    } catch (e) {
+      setScan(x => ({...x, msg: (e as Error).message === 'no-api'
+        ? 'Este navegador no deja leer el portapapeles: pulsa Ctrl+V / ⌘V o usa «Subir captura».'
+        : 'No se pudo leer el portapapeles (permiso denegado o sin imagen). Prueba con Ctrl+V / ⌘V o «Subir captura».'}));
+    }
+  }
 
   function pickRival(slot: number, species: string) {
     if (!scan.rival) return;
@@ -103,15 +139,13 @@ export function RivalPage({ds, myTeam, setMyTeam, names, setNames, battleOwn, se
         <button className="btn big" onClick={() => fileRef.current?.click()} disabled={scan.busy}>
           {scan.busy ? <><span className="spinner small inline" /> Analizando…</> : '📷 Subir captura'}
         </button>
+        <button className="btn big ghost" onClick={pasteFromClipboard} disabled={scan.busy} title="Pegar la captura copiada (también Ctrl+V / ⌘V)">📋 Pegar</button>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={e => { onFile(e.target.files?.[0]); e.target.value = ''; }} />
-        <div
-          className={`drop small muted ${scan.msg ? "has-msg" : ""}`}
-          onDragOver={e => e.preventDefault()}
-          onDrop={e => { e.preventDefault(); onFile(e.dataTransfer.files?.[0]); }}
-        >
-          {scan.msg || 'Captura de «Selecciona 4 Pokémon». También puedes arrastrarla o pegarla (Ctrl+V).'}
+        <div className={`drop small muted ${scan.msg ? 'has-msg' : ''}`}>
+          {scan.msg || 'Captura de «Selecciona 4 Pokémon». Arrástrala a cualquier parte de la página o pégala con Ctrl+V / ⌘V.'}
         </div>
       </div>
+      {dragging && <div className="drop-overlay"><span>Suelta la captura para analizarla</span></div>}
 
       {result && <PlanCard result={result} team={team} rivals={rivals} fromShot={fromShot} doubts={doubts} />}
 
