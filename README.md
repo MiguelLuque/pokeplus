@@ -4,7 +4,7 @@ Web responsive para preparar combates de VGC (dobles, traes 6 y eliges 4) en la 
 
 ## Qué hace
 
-- **Rival**: escribe los 6 Pokémon del rival (o sube / pega una captura y se leen con OCR). Para cada uno muestra sus
+- **Rival**: sube o pega una captura de la pantalla de selección de equipo y se reconocen los 6 del rival por su sprite, tipos y sexo (o escribe los nombres). Para cada uno muestra sus
   movimientos, objetos, habilidades y repartos de Stat Points más usados, con % reales, su velocidad y la probabilidad
   de cada forma Mega. Si has guardado tu equipo, recomienda **qué 4 llevar y la lead**, predice la lead del rival y
   muestra una matriz de enfrentamientos (quién hace OHKO/2HKO a quién y quién es más rápido). Sin equipo, sugiere
@@ -33,4 +33,18 @@ npm install
 npm run data   # descarga las estadísticas más recientes
 npm run dev
 npm test
+```
+
+## Reconocimiento de capturas
+
+En la pantalla “Selecciona 4 Pokémon para el combate” el juego no muestra los nombres del rival, solo su sprite, sus
+iconos de tipo y su sexo. `src/lib/vision.ts` localiza las tarjetas rojas de la derecha, lee el color de los iconos de
+tipo y el símbolo de sexo, recorta el sprite y lo compara con un índice de miniaturas 16×16 de los sprites de menú del
+juego (`public/data/sprite-index.json`). Todo ocurre en el navegador; la imagen no se sube a ningún sitio.
+
+Para regenerar el índice (p. ej. si llegan Pokémon nuevos con una regulación):
+
+```bash
+git clone --depth 1 https://github.com/KevinToodlepoot/pokemon-champions-sprites /tmp/champ-sprites
+npm run sprites -- /tmp/champ-sprites/sprites
 ```

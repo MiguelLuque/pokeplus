@@ -1,0 +1,10 @@
+/* reconocimiento de capturas */
+.scan { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr)); gap: 8px; margin-top: 10px; }
+.scan-slot { display: flex; gap: 10px; align-items: flex-start; background: var(--panel2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+.scan-slot.doubt { border-color: var(--warn, #e0a030); }
+.scan-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; text-align: left; }
+.scan-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip.small { padding: 2px 8px; font-size: .72rem; }
+.scan-crop { position: relative; overflow: hidden; border-radius: 6px; flex: none; }
+.scan-crop img { position: absolute; left: 0; top: 0; transform-origin: 0 0; max-width: none; }
+.spinner.small { width: 18px; height: 18px; border-width: 2px; }

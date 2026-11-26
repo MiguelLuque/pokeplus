@@ -4,7 +4,6 @@ import type {UsageFile} from '../src/lib/data';
 import {commonSet, parsePaste, parseNameList, fuzzySpecies, type PokeSet} from '../src/lib/sets';
 import {calcMove, statsOf, effectiveSpeed} from '../src/lib/damage';
 import {plan, buildRival, resolveForms, suggest, vsMeta} from '../src/lib/analysis';
-import {extractSpecies} from '../src/lib/ocr';
 
 const data: UsageFile = JSON.parse(readFileSync('public/data/usage.json', 'utf8'));
 const ds = Object.values(data.datasets)[0];
@@ -85,10 +84,6 @@ describe('Entrada', () => {
     expect(a.moves).toEqual(['Fake Out', 'Flare Blitz']);
     expect(b.sp.atk).toBe(32);
     expect(b.sp.def).toBe(1);
-  });
-  test('texto de OCR con ruido', () => {
-    expect(extractSpecies('Team Preview\nIncineroar Lv. 50\nRil1aboom | Sneasler\nKingambit © Garchomp')).toEqual(
-      ['Incineroar', 'Rillaboom', 'Sneasler', 'Kingambit', 'Garchomp']);
   });
 });
 
