@@ -4,7 +4,7 @@ Web responsive para preparar combates de VGC (dobles, traes 6 y eliges 4) en la 
 
 ## Qué hace
 
-- **Rival**: sube o pega una captura de la pantalla de selección de equipo y se reconocen los 6 del rival por su sprite, tipos y sexo (o escribe los nombres). Para cada uno muestra sus
+- **Rival**: sube o pega una captura de la pantalla de selección de equipo: se reconocen los 6 del rival (sprite, tipos y sexo) y tus 6 con su objeto, y arriba sale qué 4 llevar y con qué 2 abrir. Para cada rival muestra de un vistazo sus
   movimientos, objetos, habilidades y repartos de Stat Points más usados, con % reales, su velocidad y la probabilidad
   de cada forma Mega. Si has guardado tu equipo, recomienda **qué 4 llevar y la lead**, predice la lead del rival y
   muestra una matriz de enfrentamientos (quién hace OHKO/2HKO a quién y quién es más rápido). Sin equipo, sugiere
@@ -38,13 +38,16 @@ npm test
 ## Reconocimiento de capturas
 
 En la pantalla “Selecciona 4 Pokémon para el combate” el juego no muestra los nombres del rival, solo su sprite, sus
-iconos de tipo y su sexo. `src/lib/vision.ts` localiza las tarjetas rojas de la derecha, lee el color de los iconos de
-tipo y el símbolo de sexo, recorta el sprite y lo compara con un índice de miniaturas 16×16 de los sprites de menú del
-juego (`public/data/sprite-index.json`). Todo ocurre en el navegador; la imagen no se sube a ningún sitio.
+iconos de tipo y su sexo; tu columna muestra tu sprite y el icono de tu objeto. `src/lib/vision.ts` localiza las
+tarjetas rojas (rival) y moradas (tuyas), lee el color de los iconos de tipo y el símbolo de sexo y compara el sprite,
+que el juego dibuja siempre en la misma posición de la tarjeta, con cada sprite de menú del juego (atlas
+`public/data/sprites.png`, 40×40) con una holgura de ±2 píxeles. Los objetos se comparan igual contra
+`public/data/items.png` (24×24); una megapiedra solo se acepta si es de ese Pokémon. Todo ocurre en el navegador; la
+imagen no se sube a ningún sitio. Las pruebas (`tests/vision.test.ts`) usan dos capturas reales.
 
-Para regenerar el índice (p. ej. si llegan Pokémon nuevos con una regulación):
+Para regenerar los atlas (p. ej. si llegan Pokémon nuevos con una regulación):
 
 ```bash
 git clone --depth 1 https://github.com/KevinToodlepoot/pokemon-champions-sprites /tmp/champ-sprites
-npm run sprites -- /tmp/champ-sprites/sprites
+npm run sprites -- /tmp/champ-sprites
 ```

@@ -1,7 +1,7 @@
 import {useEffect, useState} from 'react';
 import {loadUsage, currentRegulation, type UsageFile} from './lib/data';
 import type {PokeSet} from './lib/sets';
-import {RivalPage} from './pages/RivalPage';
+import {RivalPage, type BattleMon} from './pages/RivalPage';
 import {CalcPage, defaultCalcSets} from './pages/CalcPage';
 import {MetaKOPage} from './pages/MetaKOPage';
 import {MetaPage} from './pages/MetaPage';
@@ -42,6 +42,7 @@ export default function App() {
   const [dsKey, setDsKey] = usePersisted<string>('pp.ds', 'bo3');
   const [team, setTeam] = usePersisted<PokeSet[]>('pp.team', []);
   const [names, setNames] = usePersisted<string>('pp.rival', '');
+  const [battleOwn, setBattleOwn] = usePersisted<BattleMon[]>('pp.battleOwn', []);
   const [att, setAtt] = usePersisted<PokeSet | null>('pp.att', null);
   const [def, setDef] = usePersisted<PokeSet | null>('pp.def', null);
   const [koSet, setKoSet] = usePersisted<PokeSet | null>('pp.ko', null);
@@ -90,7 +91,7 @@ export default function App() {
         </div>
       )}
       <main>
-        {tab === 'rival' && <RivalPage ds={ds} myTeam={team} names={names} setNames={setNames} />}
+        {tab === 'rival' && <RivalPage ds={ds} myTeam={team} setMyTeam={setTeam} names={names} setNames={setNames} battleOwn={battleOwn} setBattleOwn={setBattleOwn} />}
         {tab === 'calc' && <CalcPage ds={ds} attacker={att ?? d0} setAttacker={setAtt} defender={def ?? d1} setDefender={setDef} />}
         {tab === 'ko' && <MetaKOPage ds={ds} set={koSet ?? team[0] ?? d0} setSet={setKoSet} myTeam={team} />}
         {tab === 'meta' && <MetaPage ds={ds} />}

@@ -313,11 +313,14 @@ export function plan(my: PokeSet[], rivals: RivalMon[], field?: FieldOpts): Plan
   for (const i of lead) {
     const r = rolesOf(my[i]);
     const tags = roleTags(r);
-    const kos = rivals.map((rv, j) => ({rv, m: LM[i][j]})).filter(x => x.m.offense && x.m.offense.hits <= 2);
+    // los 3 golpes más contundentes, para leerlo de un vistazo
+    const kos = rivals.map((rv, j) => ({rv, m: LM[i][j]})).filter(x => x.m.offense && x.m.offense.hits <= 2)
+      .sort((a, b) => koValue(b.m.offense) - koValue(a.m.offense));
     const parts: string[] = [];
-    if (tags.length) parts.push(`aporta ${tags.join(', ')}`);
-    if (kos.length) parts.push(`amenaza a ${kos.map(x => `${x.rv.set.species} (${koLabel(x.m.offense!)} con ${x.m.offense!.move})`).join(', ')}`);
-    reasons.push(`${my[i].species}: ${parts.join('; ') || 'buen enfrentamiento general'}.`);
+    if (tags.length) parts.push(tags.join(', '));
+    if (kos.length) parts.push(kos.slice(0, 3).map(x => `${koLabel(x.m.offense!)} a ${x.rv.set.species} (${x.m.offense!.move})`).join(', ') +
+      (kos.length > 3 ? ` y ${kos.length - 3} más` : ''));
+    reasons.push(`${my[i].species}: ${parts.join(' · ') || 'buen enfrentamiento general'}.`);
   }
   const syn = pairSynergy(my[lead[0]], my[lead[1]]);
   if (syn >= 0.3) reasons.push('Buena sinergia entre ambos (clima / control de velocidad / Fake Out).');
