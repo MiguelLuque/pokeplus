@@ -1,0 +1,36 @@
+name: Actualizar estadísticas de uso
+
+on:
+  schedule:
+    # Smogon publica las estadísticas del mes los primeros días del mes siguiente
+    - cron: '17 6 1-6 * *'
+    - cron: '17 6 15 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/fetch-usage.mjs
+      - name: Commit si hay cambios
+        run: |
+          # Ignora el campo generatedAt: solo se hace commit si cambian los datos
+          if node -e "
+            const {execSync} = require('child_process');
+            const strip = o => JSON.stringify({...o, generatedAt: null});
+            let old = '{}';
+            try { old = execSync('git show HEAD:public/data/usage.json').toString(); } catch {}
+            process.exit(strip(JSON.parse(old)) === strip(require('./public/data/usage.json')) ? 0 : 1);
+          "; then echo "Sin cambios"; exit 0; fi
+          git config user.name "pokeplus-bot"
+          git config user.email "pokeplus-bot@users.noreply.github.com"
+          git add public/data/usage.json
+          git commit -m "Actualizar estadísticas de uso ($(node -p "require('./public/data/usage.json').month"))"
+          git push
