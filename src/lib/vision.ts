@@ -35,6 +35,12 @@ export const OWN_ITEM: Placement = {size: 0.435, ox: 0.645, oy: 0.5};
 export const SPRITE_N = 40;
 export const ITEM_N = 24;
 export const JITTER = 2;
+/**
+ * Margen que se recorta alrededor de cada elemento (en celdas). Normalmente solo se buscan
+ * ±JITTER celdas; si nada encaja bien (tarjeta mal situada por JPEG, reescalado u otra
+ * pantalla), se busca en todo este margen (ver realign en screen.ts).
+ */
+export const WIDE = 8;
 
 /* ------------------------------------------------------------------ utilidades */
 
@@ -94,6 +100,41 @@ function normalizeHeights(rows: [number, number][], ratio: number): [number, num
   const med = rows.map(([a, b]) => b - a).sort((a, b) => a - b)[rows.length >> 1];
   if (Math.abs(h - med) > 0.15 * med) return rows; // separación irregular: falta una tarjeta
   return rows.map(([a]) => [a, a + h]);
+}
+
+/**
+ * Las 6 tarjetas forman una rejilla fija (altura = ratio × separación). Si se perdió alguna
+ * fila (un rayo de luz o un borde que la une a lo de debajo), se recoloca la rejilla a partir
+ * de las filas buenas y se acepta cada posición en la que la franja [sx0, sx1) sea fondo de
+ * tarjeta en al menos el 70 % de la altura.
+ */
+function completeGrid(img: Img, rows: [number, number][], sx0: number, sx1: number,
+  test: (r: number, g: number, b: number) => boolean, ratio: number): [number, number][] {
+  if (rows.length < 2 || rows.length >= 6) return rows;
+  const h = median(rows.map(([a, b]) => b - a)), pitch = h / ratio;
+  // ancla: mediana de (inicio − k·separación), con k el índice de rejilla de cada fila
+  const a0 = rows[0][0];
+  const anchor = median(rows.map(([a]) => a - Math.round((a - a0) / pitch) * pitch));
+  const {width: W, height: H, data} = img;
+  const frac = (ya: number) => {
+    let on = 0, n = 0;
+    for (let y = Math.round(ya + 0.1 * h); y < Math.round(ya + 0.9 * h); y += 2) {
+      if (y < 0 || y >= H) return 0;
+      let c = 0;
+      for (let x = sx0; x < sx1; x++) { const i = (y * W + x) * 4; if (test(data[i], data[i + 1], data[i + 2])) c++; }
+      n++; if (c / (sx1 - sx0) > 0.6) on++;
+    }
+    return n ? on / n : 0;
+  };
+  const out: [number, number][] = [];
+  for (let k = -6; k <= 6 && out.length < 6; k++) {
+    const a = anchor + k * pitch;
+    if (a < 0 || a + h > H) continue;
+    if (frac(a) >= 0.7) out.push([Math.round(a), Math.round(a) + h]);
+  }
+  // solo si sale una rejilla continua con más filas que antes
+  const contiguous = out.every((r, i) => i === 0 || Math.abs(r[0] - out[i - 1][0] - pitch) < 2);
+  return contiguous && out.length > rows.length ? out : rows;
 }
 
 /** Columnas (en [xa, xb)) donde más del 8 % de los píxeles cumplen `test`. */
@@ -158,10 +199,27 @@ export function findRivalCards(img: Img): Box[] {
   if (!cols.length) return [];
   // la columna de tarjetas es el tramo más ancho de columnas "rojas"
   const [x0, x1] = cols.reduce((a, b) => (b[1] - b[0] > a[1] - a[0] ? b : a));
-  const w = x1 - x0;
-  // filas: franja a la izquierda de la tarjeta, donde solo hay fondo
-  const rows = normalizeHeights(cardRows(img, x0 + Math.floor(w * 0.02), x0 + Math.max(Math.floor(w * 0.17), 3), isCardRed), 0.908);
-  const rx = refineLeft(img, rows, x0, x1, isCardRed);
+  // filas: franja a la izquierda de la tarjeta, donde solo hay fondo. Si la primera estimación
+  // del borde se fue a la izquierda (rayos de luz pegados a las tarjetas), la franja cae en
+  // parte fuera y se pierden filas: se prueban franjas algo más a la derecha y, con el borde ya
+  // afinado, se repite.
+  const rowsFrom = (xa: number) => {
+    const w = x1 - xa;
+    return normalizeHeights(cardRows(img, xa + Math.floor(w * 0.02), xa + Math.max(Math.floor(w * 0.17), 3), isCardRed), 0.908);
+  };
+  let rows: [number, number][] = [];
+  for (const f of [0, 0.05, 0.1]) {
+    const r = rowsFrom(x0 + Math.round(f * (x1 - x0)));
+    if (r.length > rows.length) rows = r;
+    if (rows.length >= 6) break;
+  }
+  let rx = refineLeft(img, rows, x0, x1, isCardRed);
+  if (rx !== x0) {
+    const again = rowsFrom(rx);
+    if (again.length >= rows.length) { rows = again; rx = refineLeft(img, rows, x0, x1, isCardRed); }
+  }
+  const w = x1 - rx;
+  rows = completeGrid(img, rows, rx + Math.floor(w * 0.02), rx + Math.max(Math.floor(w * 0.17), 3), isCardRed, 0.908);
   return rows.map(([a, b]) => ({x: rx, y: a, w: x1 - rx, h: b - a}));
 }
 
@@ -274,16 +332,39 @@ export function refsFromAtlas(atlas: Img, names: string[], n: number, cols: numb
  * fuera de esa silueta. Se toma el mejor desplazamiento dentro de ±pad celdas.
  */
 export function matchPatch(p: Patch, ref: Ref, wOut = 0.3): number {
-  const {n, pad, rgb, fg} = p, M = n + 2 * pad;
-  if (!ref.alphaSum) return Infinity;
-  let best = Infinity;
-  for (let dy = -pad; dy <= pad; dy++) for (let dx = -pad; dx <= pad; dx++) {
-    const oy = pad + dy, ox = pad + dx;
-    let fgTot = 0;
+  return matchPatchAt(p, ref, 0, 0, JITTER, wOut).score;
+}
+
+/** Celdas de objeto por desplazamiento (no dependen de la referencia): se calculan una vez. */
+const fgCache = new WeakMap<Patch, Map<number, number>>();
+function fgTotal(p: Patch, ox: number, oy: number): number {
+  let m = fgCache.get(p);
+  if (!m) fgCache.set(p, (m = new Map()));
+  const key = oy * 1000 + ox;
+  let v = m.get(key);
+  if (v === undefined) {
+    const {n, pad, fg} = p, M = n + 2 * pad;
+    v = 0;
     for (let y = 0; y < n; y++) {
       const row = (oy + y) * M + ox;
-      for (let x = 0; x < n; x++) fgTot += fg[row + x];
+      for (let x = 0; x < n; x++) v += fg[row + x];
     }
+    m.set(key, v);
+  }
+  return v;
+}
+
+/**
+ * Como matchPatch, pero buscando en desplazamientos [c−r, c+r] (en celdas, dentro del margen
+ * del recorte). Devuelve también el mejor desplazamiento.
+ */
+export function matchPatchAt(p: Patch, ref: Ref, cx: number, cy: number, r: number, wOut = 0.3): {score: number; dx: number; dy: number} {
+  const {n, pad, rgb, fg} = p, M = n + 2 * pad;
+  let best = {score: Infinity, dx: 0, dy: 0};
+  if (!ref.alphaSum) return best;
+  for (let dy = Math.max(-pad, cy - r); dy <= Math.min(pad, cy + r); dy++) for (let dx = Math.max(-pad, cx - r); dx <= Math.min(pad, cx + r); dx++) {
+    const oy = pad + dy, ox = pad + dx;
+    const fgTot = fgTotal(p, ox, oy);
     let diff = 0, fgIn = 0;
     for (let k = 0; k < ref.idx.length; k++) {
       const q = ref.idx[k], y = (q / n) | 0, x = q - y * n;
@@ -295,9 +376,47 @@ export function matchPatch(p: Patch, ref: Ref, wOut = 0.3): number {
       fgIn += a * fg[j];
     }
     const s = diff / 3 / ref.alphaSum / 255 + wOut * (fgTot - fgIn) / Math.max(1, fgTot);
-    if (s < best) best = s;
+    if (s < best.score) best = {score: s, dx, dy};
   }
   return best;
+}
+
+/** Recorte a mitad de resolución (n/2, pad/2), para una búsqueda gruesa rápida. */
+export function halfPatch(p: Patch): Patch {
+  const M = p.n + 2 * p.pad, m = M >> 1, rgb = new Float32Array(m * m * 3), fg = new Uint8Array(m * m);
+  for (let y = 0; y < m; y++) for (let x = 0; x < m; x++) {
+    let f = 0;
+    for (const [yy, xx] of [[2 * y, 2 * x], [2 * y + 1, 2 * x], [2 * y, 2 * x + 1], [2 * y + 1, 2 * x + 1]]) {
+      const j = yy * M + xx;
+      for (let c = 0; c < 3; c++) rgb[(y * m + x) * 3 + c] += p.rgb[j * 3 + c] / 4;
+      f += p.fg[j];
+    }
+    fg[y * m + x] = f >= 2 ? 1 : 0;
+  }
+  return {n: p.n >> 1, pad: p.pad >> 1, rgb, fg};
+}
+
+/** Referencia a mitad de resolución (promedio con alfa). */
+const halfCache = new WeakMap<Ref, Ref>();
+export function halfRef(ref: Ref, n: number): Ref {
+  let h = halfCache.get(ref);
+  if (h) return h;
+  const m = n >> 1, A = new Float32Array(m * m), C = new Float32Array(m * m * 3);
+  for (let k = 0; k < ref.idx.length; k++) {
+    const q = ref.idx[k], y = (q / n) | 0, x = q - y * n, j = (y >> 1) * m + (x >> 1), a = ref.alpha[k];
+    A[j] += a / 4;
+    for (let c = 0; c < 3; c++) C[j * 3 + c] += a * ref.rgb[k * 3 + c];
+  }
+  const idx: number[] = [], alpha: number[] = [], rgb: number[] = [];
+  let alphaSum = 0;
+  for (let j = 0; j < m * m; j++) {
+    if (A[j] <= 0) continue;
+    idx.push(j); alpha.push(A[j]); alphaSum += A[j];
+    for (let c = 0; c < 3; c++) rgb.push(C[j * 3 + c] / (A[j] * 4));
+  }
+  h = {name: ref.name, idx: Uint16Array.from(idx), alpha: Float32Array.from(alpha), rgb: Float32Array.from(rgb), alphaSum};
+  halfCache.set(ref, h);
+  return h;
 }
 
 /* -------------------------------------------------------- tipos y sexo */
@@ -395,7 +514,7 @@ export function readRivalCards(img: Img): CardReading[] {
     box,
     types: cardTypes(img, box),
     gender: cardGender(img, box),
-    sprite: samplePatch(img, box, RIVAL_SPRITE, SPRITE_N, JITTER, isRivalBg),
+    sprite: samplePatch(img, box, RIVAL_SPRITE, SPRITE_N, WIDE, isRivalBg),
   }));
 }
 
@@ -403,8 +522,8 @@ export function readOwnCards(img: Img): OwnReading[] {
   return findOwnCards(img).map(box => ({
     box,
     gender: ownGender(img, box),
-    sprite: samplePatch(img, box, OWN_SPRITE, SPRITE_N, JITTER, isOwnBg),
-    item: samplePatch(img, box, OWN_ITEM, ITEM_N, JITTER, isItemBg),
+    sprite: samplePatch(img, box, OWN_SPRITE, SPRITE_N, WIDE, isOwnBg),
+    item: samplePatch(img, box, OWN_ITEM, ITEM_N, WIDE, isItemBg),
   }));
 }
 

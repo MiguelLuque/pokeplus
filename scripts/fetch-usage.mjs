@@ -8,6 +8,7 @@
 import {writeFileSync, mkdirSync, readFileSync, existsSync} from 'node:fs';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {Generations} from '@smogon/calc';
 
 const BASE = 'https://www.smogon.com/stats/';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -56,6 +57,29 @@ async function findLatest() {
     if (list.length) return {month, format: list[0], listing};
   }
   throw new Error('No se encontró ningún formato gen9championsvgc en las estadísticas de Smogon');
+}
+
+// Smogon a veces usa un nombre que el calc no conoce (p. ej. "Aegislash" en vez de
+// "Aegislash-Shield"): se traduce a la forma del calc con esa especie base, para que funcionen
+// el cálculo de daño y el reconocimiento de capturas.
+const calcGen = Generations.get(0);
+const calcId = n => n.toLowerCase().replace(/[^a-z0-9]/g, '');
+const renamed = new Map();
+const ALIAS = {Aegislash: 'Aegislash-Shield'};
+function calcName(name) {
+  if (calcGen.species.get(calcId(name))) return name;
+  // si no está en la tabla, la primera forma "Nombre-…" que no sea Mega (avisando en el log)
+  const to = ALIAS[name] ?? [...calcGen.species].find(s => s.name.startsWith(`${name}-`) && !/-Mega/.test(s.name))?.name;
+  renamed.set(name, to ?? null);
+  return to ?? name;
+}
+function normalizeNames(pokemon) {
+  const out = {};
+  for (const [name, mon] of Object.entries(pokemon)) {
+    for (const list of [mon.teammates, mon.checks]) for (const row of list ?? []) row[0] = calcName(row[0]);
+    out[calcName(name)] = mon;
+  }
+  return out;
 }
 
 const pct = (v, total) => Math.round((v / total) * 10000) / 100; // % con 2 decimales
@@ -152,6 +176,7 @@ async function main() {
       if (l && l[0] != null) mon.lead = l[0];
     }
     if (totals.raw && totals.lead) datasets[key].totals = totals;
+    datasets[key].pokemon = normalizeNames(datasets[key].pokemon);
     console.log(`    leads: ${Object.keys(leadRows).length} especies, uso real: ${Object.keys(usageRows).length}`);
     console.log(`  ${file}: ${chaos.info['number of battles']} combates, ${Object.keys(datasets[key].pokemon).length} Pokémon`);
   }
@@ -164,6 +189,7 @@ async function main() {
     regulation,
     datasets,
   };
+  for (const [from, to] of renamed) console.log(to ? `  nombre traducido al del calc: ${from} → ${to}` : `  AVISO: el calc no conoce a ${from}`);
   mkdirSync(dirname(OUT), {recursive: true});
   writeFileSync(OUT, JSON.stringify(result));
   console.log(`Escrito ${OUT}`);

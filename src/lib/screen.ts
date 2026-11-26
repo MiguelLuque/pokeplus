@@ -1,7 +1,8 @@
 import {gen, toID, type Dataset} from './data';
 import {
-  readRivalCards, readOwnCards, refsFromAtlas, matchPatch,
-  type Img, type Ref, type CardReading, type OwnReading,
+  readRivalCards, readOwnCards, refsFromAtlas, matchPatch, matchPatchAt, halfPatch, halfRef,
+  SPRITE_N, ITEM_N, JITTER,
+  type Img, type Ref, type Patch, type CardReading, type OwnReading,
 } from './vision';
 
 export interface Option {name: string; score: number}
@@ -11,8 +12,10 @@ export interface SlotGuess {
   species: string;
   /** alternativas ordenadas (incluye la primera) */
   options: Option[];
-  /** 0..1, margen frente a la segunda opción */
+  /** 0..1: margen frente a la segunda opción y lo bien que encaja (ver rank) */
   confidence: number;
+  /** distancia del mejor candidato (sin penalizaciones): <0.15 encaja bien */
+  fit: number;
   reading: CardReading;
 }
 
@@ -20,9 +23,11 @@ export interface OwnGuess {
   species: string;
   options: Option[];
   confidence: number;
+  fit: number;
   item: string;
   itemOptions: Option[];
   itemConfidence: number;
+  itemFit: number;
   reading: OwnReading;
 }
 
@@ -85,18 +90,58 @@ export function rivalPenalty(reading: Pick<CardReading, 'types' | 'gender'>, spe
 
 /** Margen entre la 1ª y la 2ª opción que se considera "seguro". */
 const SURE = 0.05;
+/**
+ * Distancia (sin penalizaciones) a partir de la cual el mejor candidato no "encaja": en las
+ * pruebas con todo el roster y distintos móviles, los aciertos quedan por debajo de FIT_OK y
+ * los recortes mal situados o de algo que no es un Pokémon, por encima de FIT_BAD.
+ */
+export const FIT_OK = 0.16, FIT_BAD = 0.22;
+/** Si el mejor encaje es peor que esto, se busca con más desplazamiento (realign). */
+const REALIGN = 0.12;
 
-function rank(opts: Option[]): {best: string; options: Option[]; confidence: number} {
+interface Scored extends Option {raw: number}
+
+function rank(opts: Scored[]): {best: string; options: Option[]; confidence: number; fit: number} {
   opts.sort((a, b) => a.score - b.score);
   const [a, b] = opts;
-  const confidence = a && b && Number.isFinite(a.score) ? Math.max(0, Math.min(1, (b.score - a.score) / SURE)) : a ? 1 : 0;
-  return {best: a?.name ?? '', options: opts.slice(0, 5), confidence};
+  const margin = a && b && Number.isFinite(a.score) ? Math.max(0, Math.min(1, (b.score - a.score) / SURE)) : a ? 1 : 0;
+  const fit = a ? a.raw : Infinity;
+  // aunque destaque sobre el resto, si no encaja bien no es "seguro"
+  const fits = Math.max(0, Math.min(1, (FIT_BAD - fit) / (FIT_BAD - FIT_OK)));
+  return {best: a?.name ?? '', options: opts.slice(0, 5).map(({name, score}) => ({name, score})), confidence: Math.min(margin, fits), fit};
+}
+
+/**
+ * Compara un recorte con todas las referencias. Normalmente con ±JITTER celdas de holgura;
+ * si ni la mejor encaja bien (tarjeta desplazada unos píxeles por compresión, reescalado u
+ * otra pantalla), se busca el desplazamiento en todo el margen del recorte: primero a mitad
+ * de resolución con todas las referencias y luego fino con las 12 mejores.
+ */
+function scoreAll(patch: Patch, refs: Ref[], n: number, pen: (name: string) => number): Scored[] {
+  const opts = refs.map(ref => {
+    const raw = matchPatch(patch, ref);
+    return {name: ref.name, raw, score: raw + pen(ref.name)};
+  });
+  const best = opts.reduce((m, o) => Math.min(m, o.raw), Infinity);
+  if (!(best >= REALIGN) || patch.pad <= JITTER) return opts;
+  const hp = halfPatch(patch);
+  const coarse = refs.map((ref, i) => ({i, ...matchPatchAt(hp, halfRef(ref, n), 0, 0, hp.pad)}))
+    .sort((a, b) => a.score + pen(refs[a.i].name) - b.score - pen(refs[b.i].name)).slice(0, 12);
+  for (const c of coarse) {
+    const m = matchPatchAt(patch, refs[c.i], 2 * c.dx, 2 * c.dy, 2);
+    if (m.score < opts[c.i].raw) opts[c.i] = {...opts[c.i], raw: m.score, score: m.score + pen(refs[c.i].name)};
+  }
+  return opts;
 }
 
 export function guessRival(readings: CardReading[], refs: Ref[], ds?: Dataset): SlotGuess[] {
   return readings.map(reading => {
-    const r = rank(refs.map(ref => ({name: ref.name, score: matchPatch(reading.sprite, ref) + rivalPenalty(reading, ref.name, ds)})));
-    return {species: r.best, options: r.options, confidence: r.confidence, reading};
+    const r = rank(scoreAll(reading.sprite, refs, SPRITE_N, name => rivalPenalty(reading, name, ds)));
+    // comprobación independiente: si se leyeron los tipos y no son los de la especie elegida,
+    // algo no cuadra (recorte desplazado, otra forma…): se marca como dudoso
+    const types = info(r.best).types;
+    const typesOk = !reading.types.length || (reading.types.length === types.length && reading.types.every(t => types.includes(t)));
+    return {species: r.best, options: r.options, confidence: typesOk ? r.confidence : Math.min(r.confidence, 0.3), fit: r.fit, reading};
   });
 }
 
@@ -112,12 +157,11 @@ export function itemPenalty(item: string, species: string, ds?: Dataset): number
 
 export function guessOwn(readings: OwnReading[], idx: RefIndex, ds?: Dataset): OwnGuess[] {
   return readings.map(reading => {
-    const sp = rank(idx.sprites.map(ref => ({name: ref.name, score: matchPatch(reading.sprite, ref) + (ds && !ds.pokemon[ref.name] ? 0.01 : 0)})));
-    const itemScores = idx.items.map(ref => ({name: ref.name, raw: matchPatch(reading.item, ref)}));
-    const it = rank(itemScores.map(o => ({name: o.name, score: o.raw + itemPenalty(o.name, sp.best, ds)})));
+    const sp = rank(scoreAll(reading.sprite, idx.sprites, SPRITE_N, name => (ds && !ds.pokemon[name] ? 0.01 : 0)));
+    const it = rank(scoreAll(reading.item, idx.items, ITEM_N, name => itemPenalty(name, sp.best, ds)));
     return {
-      species: sp.best, options: sp.options, confidence: sp.confidence,
-      item: it.best, itemOptions: it.options, itemConfidence: it.confidence, reading,
+      species: sp.best, options: sp.options, confidence: sp.confidence, fit: sp.fit,
+      item: it.best, itemOptions: it.options, itemConfidence: it.confidence, itemFit: it.fit, reading,
     };
   });
 }
