@@ -44,7 +44,8 @@ export function SpeciesDatalist() {
   return <datalist id="species-list">{ALL_SPECIES.map(n => <option key={n} value={n} />)}</datalist>;
 }
 
-export function KoBadge({hits, chance}: {hits: number; chance: number}) {
+export function KoBadge({hits, chance: raw}: {hits: number; chance: number}) {
+  const chance = Math.round(raw * 100) >= 100 ? 1 : raw;
   if (!hits) return <span className="ko ko-none">—</span>;
   const cls = hits === 1 ? (chance >= 1 ? 'ko-1' : 'ko-1p') : hits === 2 ? (chance >= 1 ? 'ko-2' : 'ko-2p') : hits === 3 ? 'ko-3' : 'ko-4';
   const txt = hits === 1 ? 'OHKO' : `${hits}HKO`;

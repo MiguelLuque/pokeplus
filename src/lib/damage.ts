@@ -162,6 +162,6 @@ export function effectiveSpeed(set: PokeSet, opts: {tailwind?: boolean; weather?
 export function koLabel(d: Pick<DamageSummary, 'hits' | 'chance'>) {
   if (!d.hits) return '—';
   const base = d.hits === 1 ? 'OHKO' : `${d.hits}HKO`;
-  if (d.chance > 0 && d.chance < 1) return `${Math.round(d.chance * 100)}% ${base}`;
+  if (d.chance > 0 && Math.round(d.chance * 100) < 100) return `${Math.round(d.chance * 100)}% ${base}`;
   return base;
 }
