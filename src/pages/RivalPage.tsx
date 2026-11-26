@@ -1,7 +1,8 @@
 import {useEffect, useMemo, useRef, useState} from 'react';
 import {gen, toID, moveName, itemName, abilityName, TYPE_ES, TYPE_COLORS, type Dataset} from '../lib/data';
-import {parseNameList, commonSet, type PokeSet} from '../lib/sets';
+import {parseNameList, battleTeam, type PokeSet, type BattleMon} from '../lib/sets';
 import {buildRival, plan, suggest, rolesOf, roleTags, type RivalMon, type Plan} from '../lib/analysis';
+import {MODE_ES} from '../lib/leads';
 import {recognizeTeamPreview, loadRefIndex, type SlotGuess, type OwnGuess} from '../lib/screen';
 import {effectiveSpeed, koLabel} from '../lib/damage';
 import {UsageCard} from '../components/UsageCard';
@@ -11,20 +12,7 @@ import '../scan.css';
 const EXAMPLE = 'Incineroar, Rillaboom, Sneasler, Kingambit, Charizard, Garchomp';
 
 /** Tu equipo tal y como sale en la captura (especie + objeto). */
-export interface BattleMon {species: string; item: string}
-
-/** Construye los sets de combate: tu set guardado si existe, si no el más usado, con el objeto de la captura. */
-export function battleTeam(own: BattleMon[], myTeam: PokeSet[], ds: Dataset): PokeSet[] {
-  return own.filter(o => o.species).map(o => {
-    const mine = myTeam.find(s => toID(s.species) === toID(o.species));
-    if (mine) return {...mine, item: o.item || mine.item};
-    const stone = (gen.items.get(toID(o.item) as never) as {megaStone?: Record<string, string>} | undefined)?.megaStone;
-    const mega = stone && Object.entries(stone).find(([from]) => toID(from) === toID(o.species))?.[1];
-    const usage = (mega && ds.pokemon[mega]) || ds.pokemon[o.species];
-    const set = commonSet(o.species, usage);
-    return {...set, species: o.species, item: o.item || set.item};
-  });
-}
+export {battleTeam, type BattleMon} from '../lib/sets';
 
 interface ScanState {
   busy: boolean;
@@ -58,7 +46,7 @@ export function RivalPage({ds, myTeam, setMyTeam, names, setNames, battleOwn, se
     () => (fromShot ? battleTeam(battleOwn, myTeam, ds) : myTeam.filter(s => s.species)),
     [fromShot, battleOwn, myTeam, ds]
   );
-  const result = useMemo(() => (rivals.length && team.length >= 2 ? plan(team, rivals) : null), [rivals, team]);
+  const result = useMemo(() => (rivals.length && team.length >= 2 ? plan(team, rivals, undefined, ds) : null), [rivals, team, ds]);
   const suggestions = useMemo(() => (rivals.length && !result ? suggest(rivals, ds).slice(0, 6) : []), [rivals, ds, result]);
 
   async function onFile(f?: File | null) {
@@ -223,14 +211,49 @@ function PlanCard({result, team, rivals, fromShot, doubts}: {result: Plan; team:
           <div className="plan-mons">{result.back.map(i => <BigMon key={i} set={team[i]} />)}</div>
         </div>
       </div>
-      <div className="plan-meta small">
-        <span>Su lead probable: <b>{result.rivalLead.map(j => rivals[j].set.species).join(' + ')}</b></span>
-        {left.length > 0 && <span className="muted">Se quedan: {left.map(i => team[i].species).join(', ')}</span>}
-      </div>
+      {left.length > 0 && <div className="plan-meta small muted">Se quedan: {left.map(i => team[i].species).join(', ')}</div>}
       <ul className="reasons small">{result.reasons.map((r, i) => <li key={i}>{r}</li>)}</ul>
+      <RivalForecast result={result} rivals={rivals} />
       {doubts > 0 && <p className="small warn">Hay {doubts === 1 ? 'un Pokémon dudoso' : `${doubts} Pokémon dudosos`} en la lectura: revísalo abajo.</p>}
       {!fromShot && <p className="small muted">Con tu equipo de «Mi equipo».</p>}
     </section>
+  );
+}
+
+const CONF_CLASS = {alta: 'good', media: 'warn', baja: 'bad'} as const;
+const pct = (p: number) => `${Math.round(p * 100)}%`;
+
+/** Lo que probablemente hará el rival: leads con %, Mega, atrás y quién se queda fuera. */
+function RivalForecast({result, rivals}: {result: Plan; rivals: RivalMon[]}) {
+  const pr = result.prediction;
+  const name = (j: number) => rivals[j]?.set.species ?? '?';
+  const top = pr.leadPairs.slice(0, 3);
+  const mega = pr.mega[0];
+  const back = pr.back[0];
+  const out = rivals.map((_, j) => j).sort((a, b) => pr.bring[a] - pr.bring[b]).slice(0, Math.max(0, rivals.length - 4)).filter(j => pr.bring[j] < 0.5);
+  const mode = pr.modes.primary;
+  return (
+    <div className="forecast">
+      <div className="forecast-head">
+        <span className="plan-label">Su lead probable</span>
+        <span className={`small ${CONF_CLASS[pr.confidence]}`}>confianza {pr.confidence}</span>
+      </div>
+      <ol className="forecast-leads">
+        {top.map(l => (
+          <li key={l.pair.join()}>
+            <b className="fc-pct">{pct(l.p)}</b>
+            <span className="fc-pair">{l.pair.map(name).join(' + ')}</span>
+            {l.why.length > 0 && <span className="small muted fc-why">{l.why.slice(0, 2).join(' · ')}</span>}
+          </li>
+        ))}
+      </ol>
+      <div className="forecast-meta small">
+        {mode && <span>Modo: <b>{MODE_ES[mode]}</b>{pr.modes.secondary && <> · plan B {MODE_ES[pr.modes.secondary]}</>}</span>}
+        {mega && mega.p >= 0.2 && <span>Mega probable: <b>{name(mega.index)}</b> {pct(mega.p)}</span>}
+        {back && <span>Atrás: <b>{back.pair.map(name).join(' + ')}</b></span>}
+        {out.length > 0 && <span className="muted">Probablemente fuera: {out.map(j => `${name(j)} (${pct(1 - pr.bring[j])})`).join(', ')}</span>}
+      </div>
+    </div>
   );
 }
 
@@ -280,6 +303,7 @@ function RivalRow({r, j, team, result, open, onToggle, onForm}: {
         <div className="rival-main">
           <div className="rival-top">
             <b>{r.set.species}{isLead && <span className="lead-tag">lead probable</span>}</b>
+            {result && <span className="pill muted" title="Probabilidad de que lo traiga · de que abra con él">trae {pct(result.bringW[j])} · abre {pct(result.leadW[j])}</span>}
             <span className="pill" title="Velocidad con el reparto más usado">Vel {spe}{scarf >= 5 && <span className="warn"> · Scarf {scarf.toFixed(0)}%</span>}</span>
           </div>
           <div className="small muted line">

@@ -1,6 +1,7 @@
 import {gen, toID, type Dataset, type MonUsage, speciesName} from './data';
 import {commonSet, commonAttacks, attacksOf, battleSpecies, type PokeSet} from './sets';
 import {calcMove, effectiveSpeed, koLabel, type DamageSummary, type FieldOpts} from './damage';
+import {predictRival, tagMon, srcFromSet, detectModes, roleCompat, comb, type RivalPrediction} from './leads';
 
 /* ---------- Resolución de formas (Mega o no) a partir del uso ---------- */
 
@@ -133,13 +134,6 @@ export function rolesOf(set: PokeSet): Roles {
   };
 }
 
-const WEATHER_ABUSERS: Record<string, string[]> = {
-  Sun: ['chlorophyll', 'solarpower', 'protosynthesis', 'harvest', 'flowergift'],
-  Rain: ['swiftswim', 'raindish', 'hydration'],
-  Sand: ['sandrush', 'sandforce', 'sandveil'],
-  Snow: ['slushrush', 'icebody', 'snowcloak'],
-};
-
 export function roleTags(r: Roles): string[] {
   const t: string[] = [];
   if (r.fakeOut) t.push('Fake Out');
@@ -149,27 +143,6 @@ export function roleTags(r: Roles): string[] {
   if (r.intimidate) t.push('Intimidación');
   if (r.weather) t.push({Sun: 'Sol', Rain: 'Lluvia', Sand: 'Arena', Snow: 'Nieve'}[r.weather] ?? r.weather);
   return t;
-}
-
-function pairSynergy(a: PokeSet, b: PokeSet): number {
-  const ra = rolesOf(a), rb = rolesOf(b);
-  let s = 0;
-  if (ra.fakeOut !== rb.fakeOut) s += 0.15; // un Fake Out da un turno libre al compañero
-  if (ra.fakeOut && rb.fakeOut) s += 0.05;
-  if (ra.tailwind || rb.tailwind) s += 0.15;
-  if (ra.trickRoom || rb.trickRoom) {
-    const slow = [a, b].some(x => effectiveSpeed(x) < 70);
-    s += slow ? 0.25 : 0.05;
-  }
-  if (ra.redirect || rb.redirect) s += 0.1;
-  if (ra.intimidate || rb.intimidate) s += 0.08;
-  for (const [x, y] of [[ra, b], [rb, a]] as const) {
-    if (x.weather && WEATHER_ABUSERS[x.weather]?.includes(abil(y))) s += 0.3;
-    if (x.weather === 'Sun' && y.moves.some(m => gen.moves.get(toID(m) as never)?.type === 'Fire')) s += 0.05;
-    if (x.weather === 'Rain' && y.moves.some(m => gen.moves.get(toID(m) as never)?.type === 'Water')) s += 0.05;
-  }
-  s += 0.03 * (ra.spreadAttacks + rb.spreadAttacks);
-  return s;
 }
 
 /* ---------- Predicción del rival ---------- */
@@ -193,39 +166,9 @@ export function bringWeights(rivals: RivalMon[]): number[] {
   return rivals.map(r => 0.55 + 0.45 * ((r.usage?.usage ?? 1) / max));
 }
 
-/** Probabilidad (heurística) de que salga de lead. */
-export function leadWeights(rivals: RivalMon[]): number[] {
-  const bw = bringWeights(rivals);
-  const raw = rivals.map((r, i) => {
-    const u = r.usage;
-    const pct = (id: string) => u?.moves.find(m => m[0] === id)?.[1] ?? 0;
-    const roles = rolesOf(r.set);
-    let w = bw[i];
-    w += 0.6 * (pct('fakeout') / 100);
-    w += 0.45 * (Math.max(pct('tailwind'), pct('trickroom')) / 100);
-    w += 0.3 * ((pct('followme') + pct('ragepowder')) / 100);
-    if (roles.weather) w += 0.3;
-    if (roles.intimidate) w += 0.15;
-    return w;
-  });
-  const total = raw.reduce((a, b) => a + b, 0) || 1;
-  return raw.map(w => (2 * w) / total); // suman 2 (dos huecos de lead)
-}
-
-export function predictRivalLead(rivals: RivalMon[]) {
-  const lw = leadWeights(rivals);
-  let best: [number, number] = [0, 1];
-  let bestScore = -Infinity;
-  for (let i = 0; i < rivals.length; i++) {
-    for (let j = i + 1; j < rivals.length; j++) {
-      const s = lw[i] + lw[j] + pairSynergy(rivals[i].set, rivals[j].set);
-      if (s > bestScore) { bestScore = s; best = [i, j]; }
-    }
-  }
-  return {pair: best, weights: lw};
-}
-
 /* ---------- Recomendación: traer 4 y lead ---------- */
+
+export interface PlanOption {lead: [number, number]; back: number[]; score: number}
 
 export interface Plan {
   matrix: Matchup[][]; // [mio][rival]
@@ -234,86 +177,168 @@ export interface Plan {
   back: number[];
   bringScore: number;
   reasons: string[];
+  /** lead más probable del rival */
   rivalLead: [number, number];
+  /** P(lo trae) y P(sale de lead) de cada rival */
   bringW: number[];
   leadW: number[];
   leadWeather: string;
+  prediction: RivalPrediction;
+  /** otras opciones propias buenas (lead distinto) */
+  alternatives: PlanOption[];
 }
 
-function combos(n: number, k: number): number[][] {
-  const out: number[][] = [];
-  const rec = (start: number, acc: number[]) => {
-    if (acc.length === k) { out.push([...acc]); return; }
-    for (let i = start; i < n; i++) rec(i + 1, [...acc, i]);
-  };
-  rec(0, []);
-  return out;
+/** Nivel de KO: OHKO = 1, 2HKO = 0,6, 3HKO = 0,3. */
+function offLevel(d: DamageSummary | null): number {
+  if (!d || !d.hits) return 0;
+  if (d.hits === 1) return d.chance >= 1 ? 1 : 0.6 + 0.4 * d.chance;
+  if (d.hits === 2) return d.chance >= 1 ? 0.6 : 0.45 + 0.15 * d.chance;
+  if (d.hits === 3) return 0.3;
+  return 0.1;
 }
 
-export function plan(my: PokeSet[], rivals: RivalMon[], field?: FieldOpts): Plan {
+const isMegaSet = (s: PokeSet) => battleSpecies(s) !== s.species || /-Mega/.test(s.species);
+const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+
+export function plan(my: PokeSet[], rivals: RivalMon[], field?: FieldOpts, ds?: Dataset): Plan {
   const matrix = my.map(m => rivals.map(r => matchup(m, r.set, r.usage, field)));
-  const bw = bringWeights(rivals);
-  const {pair: rivalLead, weights: lw} = predictRivalLead(rivals);
-  const k = Math.min(4, my.length);
+  const nR = rivals.length;
 
-  const coverage = (sel: number[], weights: number[]) => rivals.reduce((acc, _, j) => {
-    const off = Math.max(...sel.map(i => matrix[i][j].o));
-    const def = Math.max(...sel.map(i => 1 - matrix[i][j].t));
-    return acc + weights[j] * (0.6 * off + 0.4 * def);
-  }, 0);
+  // 1) Predicción del rival (con la presión que ejerce sobre tu equipo)
+  const pressure = rivals.map((_, j) => Math.min(1, 1.3 * mean(my.map((_, i) => koValue(matrix[i][j].threat)))));
+  const prediction = predictRival(rivals.map(r => ({set: r.set, usage: r.usage, pStone: isMegaSet(r.set) ? 1 : 0})), ds, pressure);
+  const rivalLead = prediction.leadPairs[0]?.pair ?? [0, Math.min(1, nR - 1)];
 
-  let bring = combos(my.length, k)[0] ?? [];
-  let bringScore = -Infinity;
-  for (const c of combos(my.length, k)) {
-    let s = coverage(c, bw);
-    const roles = c.map(i => rolesOf(my[i]));
-    if (roles.some(r => r.fakeOut)) s += 0.15;
-    if (roles.some(r => r.tailwind || r.trickRoom)) s += 0.15;
-    if (roles.some(r => r.intimidate)) s += 0.08;
-    // sinergias internas (clima + beneficiario, Trick Room + lentos…)
-    let syn = 0;
-    for (const [x, y] of combos(c.length, 2)) syn = Math.max(syn, pairSynergy(my[c[x]], my[c[y]]));
-    s += 0.5 * syn;
-    // penaliza que varios caigan ante el mismo rival
-    for (let j = 0; j < rivals.length; j++) {
-      const weak = c.filter(i => matrix[i][j].t >= 0.75).length;
-      if (weak >= 3) s -= 0.15 * bw[j];
-    }
-    if (s > bringScore) { bringScore = s; bring = c; }
-  }
+  // 2) Tus etiquetas de rol a partir de tus sets
+  const myTags = my.map((s, i) => {
+    const t = tagMon(s, srcFromSet(s), s.moves.map(m => [toID(m), 100] as [string, number]),
+      Math.min(1, 1.3 * mean(rivals.map((_, j) => koValue(matrix[i][j].offense)))));
+    t.mega = isMegaSet(s);
+    return t;
+  });
+  const myModes = detectModes(myTags);
 
-  // Matrices con el clima que pone mi propio equipo (lluvia, sol…)
-  const weatherMatrix: Record<string, Matchup[][]> = {};
+  // 3) Matriz M[i][j] = off(i→j) − off(j→i) + 0,3·velocidad, con el clima que haya en el campo
+  const trRival = prediction.modes.primary === 'TRICK_ROOM';
+  // Intimidación probable del rival: −1 Ataque ≈ ×0,67 de daño a tus atacantes físicos
+  // (Defiant/Competitive la castigan). Factor sobre el nivel de KO.
+  const pInt = Math.max(0, ...prediction.tags.map((t, j) => (t.intimidate >= 0.5 ? prediction.bring[j] : 0)));
+  const intimAdj = my.map((s, i) => {
+    const ab = toID(s.ability);
+    if (ab === 'defiant' || ab === 'competitive') return 1 + 0.1 * pInt;
+    if (!myTags[i].physical || ['clearbody', 'innerfocus', 'owntempo', 'oblivious', 'scrappy', 'fullmetalbody', 'mirrorarmor', 'guarddog', 'hypercutter'].includes(ab)) return 1;
+    return 1 - 0.35 * pInt;
+  });
+  const Ms: Record<string, number[][]> = {};
+  const matrices: Record<string, Matchup[][]> = {'': matrix};
   const matrixFor = (w: string) => {
-    if (!w) return matrix;
-    weatherMatrix[w] ??= my.map(m => rivals.map(r => matchup(m, r.set, r.usage, {...field, weather: w as FieldOpts['weather']})));
-    return weatherMatrix[w];
+    if (!w || field?.weather) return matrix;
+    matrices[w] ??= my.map(m => rivals.map(r => matchup(m, r.set, r.usage, {...field, weather: w as FieldOpts['weather']})));
+    return matrices[w];
+  };
+  const MFor = (w: string) => {
+    if (Ms[w]) return Ms[w];
+    const mx = matrixFor(w);
+    Ms[w] = mx.map((row, i) => row.map(m => {
+      let spd = m.mySpeed > m.rivalSpeed ? 1 : m.mySpeed < m.rivalSpeed ? -1 : 0;
+      if (trRival) spd = -0.5 * spd;
+      return offLevel(m.offense) * intimAdj[i] - offLevel(m.threat) + 0.3 * spd;
+    }));
+    return Ms[w];
+  };
+  const myW = my.map(s => rolesOf(s).weather);
+  const rvW = rivals.map(r => rolesOf(r.set).weather);
+  const mySpe = my.map(s => effectiveSpeed(s));
+  const rvSpe = rivals.map(r => effectiveSpeed(r.set));
+  /** Clima con P vs Q: gana el colocador más lento (pone su clima después). */
+  const weatherOf = (P: number[], Q: number[]) => {
+    if (field?.weather) return field.weather;
+    const mine = P.filter(i => myW[i]).sort((a, b) => mySpe[a] - mySpe[b])[0];
+    const theirs = Q.filter(j => rvW[j]).sort((a, b) => rvSpe[a] - rvSpe[b])[0];
+    if (mine !== undefined && theirs !== undefined) return mySpe[mine] <= rvSpe[theirs] ? myW[mine] : rvW[theirs];
+    return mine !== undefined ? myW[mine] : theirs !== undefined ? rvW[theirs] : '';
   };
 
-  // Lead: presión sobre las leads probables del rival + sinergia.
-  let lead: [number, number] = [bring[0], bring[1] ?? bring[0]];
-  let leadScore = -Infinity;
-  let leadWeather = '';
-  for (const [a, b] of combos(bring.length, 2).map(p => [bring[p[0]], bring[p[1]]])) {
-    const w = field?.weather || rolesOf(my[a]).weather || rolesOf(my[b]).weather;
-    const M = matrixFor(w);
-    let s = 0;
-    for (let j = 0; j < rivals.length; j++) {
-      const off = Math.max(M[a][j].o, M[b][j].o);
-      const thr = Math.min(M[a][j].t, M[b][j].t) * 0.5 + Math.max(M[a][j].t, M[b][j].t) * 0.5;
-      s += lw[j] * (off - 0.6 * thr);
-    }
-    s += pairSynergy(my[a], my[b]);
-    if (s > leadScore) { leadScore = s; lead = [a, b]; leadWeather = w; }
-  }
-  const LM = matrixFor(leadWeather);
-  const back = bring.filter(i => !lead.includes(i));
+  const Rcache = new Map<string, number>();
+  const Ruser = (P: [number, number]) => {
+    const k = P.join(',');
+    if (!Rcache.has(k)) Rcache.set(k, roleCompat(myTags[P[0]], myTags[P[1]], myModes).r);
+    return Rcache.get(k)!;
+  };
+  const U = (P: [number, number], Q: [number, number]) => {
+    const M = MFor(weatherOf(P, Q));
+    let u = 0;
+    for (const i of P) for (const j of Q) u += M[i][j];
+    u /= 4;
+    u += 0.5 * Ruser(P);
+    return u;
+  };
 
+  const Qs = prediction.leadPairs;
+  const Qlikely = Qs.filter(q => q.p > 0.08);
+  if (!Qlikely.length && Qs[0]) Qlikely.push(Qs[0]);
+  const pBring = prediction.bring;
+  const idxMine = my.map((_, i) => i);
+  const k = Math.min(4, my.length);
+  const myStones = myTags.filter(t => t.mega).length;
+
+  const options: PlanOption[] = [];
+  for (const S of comb(idxMine, k)) {
+    // valor del cuatro: dañar a los seis (B2)
+    // y tener a alguien que aguante sus golpes
+    let V = 0;
+    for (let j = 0; j < nR; j++) {
+      const best = Math.max(...S.map(i => offLevel(matrix[i][j].offense) * intimAdj[i]));
+      V += pBring[j] * best;
+      if (pBring[j] > 0.5 && best < 0.3) V -= 1.0;
+      V += 0.3 * pBring[j] * Math.max(...S.map(i => 1 - offLevel(matrix[i][j].threat)));
+    }
+    // coherencia (beneficiario sin habilitador) y una sola Mega
+    let C = 0;
+    for (const i of S) for (const [M, d] of Object.entries(myTags[i].dep)) {
+      if ((d ?? 0) >= 0.3 && !S.some(x => (myTags[x].sets[M as keyof typeof myTags[number]['sets']] ?? 0) >= 0.25)) C -= 2 * d!;
+    }
+    const st = S.filter(i => myTags[i].mega).length;
+    if (st > 1) C -= 1.0 * (st - 1);
+    if (!st && myStones) C -= 0.3;
+
+    const pairs = comb(S, 2) as [number, number][];
+    const Ucache = pairs.map(P => Qs.map(q => U(P, q.pair)));
+    pairs.forEach((P, pi) => {
+      const back = S.filter(i => !P.includes(i));
+      const E = Qs.reduce((acc, q, qi) => acc + q.p * Ucache[pi][qi], 0);
+      const worst = Math.min(...Qlikely.map(q => Ucache[pi][Qs.indexOf(q)]));
+      // rescate: cuánto mejora un lead que incluya a alguno de atrás si este sale mal
+      let Rb = 0;
+      Qs.forEach((q, qi) => {
+        let alt = -Infinity;
+        pairs.forEach((P2, p2) => { if (p2 !== pi && P2.some(i => back.includes(i))) alt = Math.max(alt, Ucache[p2][qi]); });
+        Rb += q.p * Math.max(0, alt - Ucache[pi][qi]);
+      });
+      const score = 0.6 * E + 0.4 * worst + 0.5 * V + 0.3 * Rb + C;
+      options.push({lead: P, back, score});
+    });
+  }
+  options.sort((a, b) => b.score - a.score);
+  const best = options[0] ?? {lead: [0, Math.min(1, my.length - 1)] as [number, number], back: [], score: 0};
+  const lead = best.lead;
+  const back = best.back;
+  const bring = [...lead, ...back];
+  const seenLeads = new Set([lead.join(',')]);
+  const alternatives: PlanOption[] = [];
+  for (const o of options.slice(1)) {
+    if (alternatives.length >= 2) break;
+    const key = o.lead.join(',');
+    if (seenLeads.has(key)) continue;
+    seenLeads.add(key);
+    alternatives.push(o);
+  }
+
+  const leadWeather = weatherOf(lead, rivalLead);
+  const LM = matrixFor(leadWeather);
   const reasons: string[] = [];
   for (const i of lead) {
-    const r = rolesOf(my[i]);
-    const tags = roleTags(r);
-    // los 3 golpes más contundentes, para leerlo de un vistazo
+    const tags = roleTags(rolesOf(my[i]));
     const kos = rivals.map((rv, j) => ({rv, m: LM[i][j]})).filter(x => x.m.offense && x.m.offense.hits <= 2)
       .sort((a, b) => koValue(b.m.offense) - koValue(a.m.offense));
     const parts: string[] = [];
@@ -322,11 +347,17 @@ export function plan(my: PokeSet[], rivals: RivalMon[], field?: FieldOpts): Plan
       (kos.length > 3 ? ` y ${kos.length - 3} más` : ''));
     reasons.push(`${my[i].species}: ${parts.join(' · ') || 'buen enfrentamiento general'}.`);
   }
-  const syn = pairSynergy(my[lead[0]], my[lead[1]]);
-  if (syn >= 0.3) reasons.push('Buena sinergia entre ambos (clima / control de velocidad / Fake Out).');
+  const why = roleCompat(myTags[lead[0]], myTags[lead[1]], myModes).why.filter(w => !/sin atacante|distintos/.test(w));
+  if (why.length) reasons.push(`Juntos: ${why.join(', ')}.`);
+  // ¿a quién de los probables no responde nadie?
+  const uncovered = rivals.map((r, j) => ({r, j})).filter(({j}) => pBring[j] > 0.5 && Math.max(...bring.map(i => offLevel(matrix[i][j].offense))) < 0.3);
+  if (uncovered.length) reasons.push(`Ojo: nadie de tus 4 le hace mucho daño a ${uncovered.map(x => x.r.set.species).join(', ')}.`);
   if (leadWeather) reasons.push(`Daños de la lead calculados con ${{Sun: 'sol', Rain: 'lluvia', Sand: 'tormenta de arena', Snow: 'nieve'}[leadWeather] ?? leadWeather} activo.`);
 
-  return {matrix, bring, lead, back, bringScore, reasons, rivalLead, bringW: bw, leadW: lw, leadWeather};
+  return {
+    matrix, bring, lead, back, bringScore: best.score, reasons, rivalLead,
+    bringW: prediction.bring, leadW: prediction.lead, leadWeather, prediction, alternatives,
+  };
 }
 
 /* ---------- Sugerencias del meta contra un equipo rival ---------- */

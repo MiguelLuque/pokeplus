@@ -1,4 +1,4 @@
-import {gen, toID, speciesName, moveName, itemName, abilityName, type MonUsage} from './data';
+import {gen, toID, speciesName, moveName, itemName, abilityName, type MonUsage, type Dataset} from './data';
 
 export type StatID = 'hp' | 'atk' | 'def' | 'spa' | 'spd' | 'spe';
 export const STATS: StatID[] = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
@@ -202,3 +202,19 @@ export function fuzzySpecies(text: string, maxRatio = 0.34): string | undefined 
   }
   return bestScore <= maxRatio ? best : undefined;
 }
+
+export interface BattleMon {species: string; item: string}
+
+/** Construye los sets de combate: tu set guardado si existe, si no el más usado, con el objeto de la captura. */
+export function battleTeam(own: BattleMon[], myTeam: PokeSet[], ds: Dataset): PokeSet[] {
+  return own.filter(o => o.species).map(o => {
+    const mine = myTeam.find(s => toID(s.species) === toID(o.species));
+    if (mine) return {...mine, item: o.item || mine.item};
+    const stone = (gen.items.get(toID(o.item) as never) as {megaStone?: Record<string, string>} | undefined)?.megaStone;
+    const mega = stone && Object.entries(stone).find(([from]) => toID(from) === toID(o.species))?.[1];
+    const usage = (mega && ds.pokemon[mega]) || ds.pokemon[o.species];
+    const set = commonSet(o.species, usage);
+    return {...set, species: o.species, item: o.item || set.item};
+  });
+}
+

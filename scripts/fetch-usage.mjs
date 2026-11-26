@@ -68,6 +68,20 @@ function top(obj, total, n, minPct = 0.5) {
     .slice(0, n);
 }
 
+// Ficheros de texto: uso (Raw / Real) y leads por especie.
+//   | 1    | Sneasler   | 29.18886% | 962958 | 25.107% | 473392 | 26.762% |
+function parseTable(txt) {
+  const out = {};
+  for (const line of (txt || '').split('\n')) {
+    if (!/^\s*\| +\d/.test(line)) continue;
+    const c = line.split('|').map(x => x.trim()).filter(Boolean);
+    const nums = c.slice(2).filter(x => /^[\d.]+%?$/.test(x));
+    const counts = nums.filter(x => !x.endsWith('%')).map(Number);
+    out[c[1]] = counts;
+  }
+  return out;
+}
+
 function condense(chaos) {
   const out = {};
   const entries = Object.entries(chaos.data).sort((a, b) => b[1].usage - a[1].usage);
@@ -110,6 +124,13 @@ async function main() {
       console.log(`  (sin ${file})`);
       continue;
     }
+    const [usageTxt, leadsTxt] = local
+      ? [join(local, `${id}-${CUTOFF}.txt`), join(local, 'leads', `${id}-${CUTOFF}.txt`)]
+          .map(f => (existsSync(f) ? readFileSync(f, 'utf8') : null))
+      : await Promise.all([
+          get(`${BASE}${month}/${id}-${CUTOFF}.txt`).catch(() => null),
+          get(`${BASE}${month}/leads/${id}-${CUTOFF}.txt`).catch(() => null),
+        ]);
     const chaos = local
       ? JSON.parse(readFileSync(join(local, file), 'utf8'))
       : await get(`${BASE}${month}/chaos/${file}`, true);
@@ -120,6 +141,18 @@ async function main() {
       source: `${BASE}${month}/chaos/${file}`,
       pokemon: condense(chaos),
     };
+    // Real (veces que salió al campo) y leads por especie, para predecir qué trae y con qué abre
+    const usageRows = parseTable(usageTxt), leadRows = parseTable(leadsTxt);
+    const totals = {raw: 0, real: 0, lead: 0};
+    for (const [, [raw, real]] of Object.entries(usageRows)) { totals.raw += raw || 0; totals.real += real || 0; }
+    for (const [, [lead]] of Object.entries(leadRows)) totals.lead += lead || 0;
+    for (const [name, mon] of Object.entries(datasets[key].pokemon)) {
+      const u = usageRows[name], l = leadRows[name];
+      if (u && u[1] != null) { mon.teams = u[0]; mon.real = u[1]; }
+      if (l && l[0] != null) mon.lead = l[0];
+    }
+    if (totals.raw && totals.lead) datasets[key].totals = totals;
+    console.log(`    leads: ${Object.keys(leadRows).length} especies, uso real: ${Object.keys(usageRows).length}`);
     console.log(`  ${file}: ${chaos.info['number of battles']} combates, ${Object.keys(datasets[key].pokemon).length} Pokémon`);
   }
   const reg = /reg([a-z]+)$/.exec(format)[1].toUpperCase();

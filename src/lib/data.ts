@@ -6,6 +6,8 @@ export const gen = Generations.get(0 as never);
 export type Pair = [string, number];
 
 export interface MonUsage {
+  /** equipos que lo llevan, leads y veces que salió al campo (ficheros de texto de Smogon) */
+  teams?: number; lead?: number; real?: number;
   rank: number;
   usage: number; // % de equipos
   raw: number;
@@ -23,6 +25,7 @@ export interface Dataset {
   battles: number;
   source: string;
   pokemon: Record<string, MonUsage>;
+  totals?: {raw: number; real: number; lead: number};
 }
 
 export interface UsageFile {

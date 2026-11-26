@@ -97,8 +97,10 @@ describe('Recomendaciones', () => {
     expect(new Set(p.bring).size).toBe(4);
     expect(p.lead.every(i => p.bring.includes(i))).toBe(true);
     expect(p.back.length).toBe(2);
-    // lluvia: Pelipper + Basculegion con Nado Rápido
-    expect(p.lead.map(i => mine[i].species).sort()).toEqual(['Basculegion', 'Pelipper']);
+    // lluvia: Pelipper + quien la aprovecha (Basculegion con Nado Rápido o Archaludon con Electro Shot)
+    const lead = p.lead.map(i => mine[i].species);
+    expect(lead).toContain('Pelipper');
+    expect(lead.some(n => n === 'Basculegion' || n === 'Archaludon')).toBe(true);
   });
   test('sugerencias y KO vs meta', () => {
     expect(suggest(rivals, ds).length).toBeGreaterThan(5);
