@@ -117,6 +117,40 @@ const isCardRed = (r: number, g: number, b: number) => r > 60 && r > 2 * g && r 
 /** Fondo morado de tus tarjetas (relleno y borde). */
 const isOwnPurple = (r: number, g: number, b: number) => b > 150 && b > r + 50 && b > g + 60;
 
+/**
+ * Borde izquierdo exacto de la columna de tarjetas (todo se posiciona desde ahí).
+ * La primera estimación (columnRuns) mira toda la altura de la pantalla y se ensancha si
+ * hay algo del mismo color al lado: p. ej. los rayos de luz rosas, que en las capturas de
+ * iPhone (Display P3, convertidas a sRGB por el navegador) pasan por "rojo de tarjeta".
+ * Aquí solo cuentan las filas de las tarjetas: el borde es la primera columna desde la que
+ * el margen izquierdo de la tarjeta (fondo liso) es de ese color en casi todas las filas.
+ */
+function refineLeft(img: Img, rows: [number, number][], x0: number, x1: number,
+  test: (r: number, g: number, b: number) => boolean): number {
+  if (!rows.length) return x0;
+  const {width: W, data} = img;
+  const h = median(rows.map(([a, b]) => b - a));
+  const ys: number[] = [];
+  for (const [a, b] of rows) for (let f = 0.15; f < 0.9; f += 0.1) ys.push(Math.round(a + f * (b - a)));
+  const k = Math.max(3, Math.round(0.15 * h));
+  const xa = Math.max(0, x0 - Math.round(0.5 * h)), xb = Math.min(x1, x0 + Math.round(0.4 * h));
+  const on: boolean[] = [];
+  for (let x = xa; x < xb + k; x++) {
+    let n = 0;
+    for (const y of ys) {
+      const i = (y * W + x) * 4;
+      if (test(data[i], data[i + 1], data[i + 2])) n++;
+    }
+    on.push(n / ys.length > 0.8);
+  }
+  for (let x = xa; x < xb; x++) {
+    let ok = true;
+    for (let j = 0; j < k && ok; j++) ok = on[x - xa + j];
+    if (ok) return x;
+  }
+  return x0;
+}
+
 /** Localiza las tarjetas rojas del equipo rival (columna derecha). */
 export function findRivalCards(img: Img): Box[] {
   const {width: W} = img;
@@ -127,7 +161,8 @@ export function findRivalCards(img: Img): Box[] {
   const w = x1 - x0;
   // filas: franja a la izquierda de la tarjeta, donde solo hay fondo
   const rows = normalizeHeights(cardRows(img, x0 + Math.floor(w * 0.02), x0 + Math.max(Math.floor(w * 0.17), 3), isCardRed), 0.908);
-  return rows.map(([a, b]) => ({x: x0, y: a, w, h: b - a}));
+  const rx = refineLeft(img, rows, x0, x1, isCardRed);
+  return rows.map(([a, b]) => ({x: rx, y: a, w: x1 - rx, h: b - a}));
 }
 
 /** Localiza tus tarjetas moradas (columna izquierda). */

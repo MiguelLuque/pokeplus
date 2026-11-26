@@ -12,7 +12,12 @@ const meta = JSON.parse(readFileSync('public/data/sprite-index.json', 'utf8'));
 const atlas = (k: 'sprites' | 'items') => refsFromAtlas(load(`public/data/${meta[k].file}`), meta[k].names, meta[k].n, meta[k].cols);
 const idx: RefIndex = {sprites: atlas('sprites'), items: atlas('items')};
 
-/** Capturas reales de Miguel (nombres de usuario tapados), con lo que hay en pantalla. */
+/**
+ * Capturas reales de Miguel (nombres de usuario tapados), con lo que hay en pantalla.
+ * `team-preview-N.png` es la imagen tal como la decodifica el navegador (las capturas de iPhone
+ * son Display P3 y Chrome/Safari las pasan a sRGB: es lo que recibe la app). `-raw` es la misma
+ * sin esa conversión de color (como la vería un móvil o editor que ignore el perfil).
+ */
 const SHOTS = [
   {
     file: 'tests/fixtures/team-preview-1.png',
@@ -30,7 +35,16 @@ const SHOTS = [
     own: ['Basculegion', 'Rillaboom', 'Garchomp', 'Volcarona', 'Kingambit', 'Milotic'],
     items: ['Choice Scarf', 'Miracle Seed', 'Garchompite Z', 'Grassy Seed', 'Focus Sash', 'Leftovers'],
   },
-];
+  {
+    // rayos de luz rosas justo al lado de las tarjetas rivales: ensanchaban la columna detectada
+    file: 'tests/fixtures/team-preview-3.png',
+    rival: ['Gengar', 'Incineroar', 'Rillaboom', 'Pawmot', 'Sylveon', 'Salamence'],
+    types: [['Ghost', 'Poison'], ['Fire', 'Dark'], ['Grass'], ['Electric', 'Fighting'], ['Fairy'], ['Dragon', 'Flying']],
+    gender: ['M', 'M', 'M', 'M', 'M', 'M'],
+    own: ['Basculegion', 'Garchomp', 'Raichu', 'Pelipper', 'Archaludon', 'Sneasler'],
+    items: ['Choice Scarf', 'Life Orb', 'Raichunite X', 'Focus Sash', 'Leftovers', 'Electric Seed'],
+  },
+].flatMap(s => [s, {...s, file: s.file.replace('.png', '-raw.png')}]);
 
 /** Reduce la imagen a la mitad (promedio 2×2), como una captura de menos resolución. */
 function half(img: Img): Img {
@@ -43,7 +57,7 @@ function half(img: Img): Img {
 }
 
 for (const shot of SHOTS) {
-  describe(`Captura ${shot.file.match(/\d/)![0]}`, () => {
+  describe(`Captura ${shot.file.match(/\d(-raw)?/)![0]}`, () => {
     const img = load(shot.file);
     const rival = readRivalCards(img);
     const own = readOwnCards(img);
