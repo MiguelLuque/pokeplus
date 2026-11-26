@@ -1,21 +1,68 @@
-# PokePlus
+# PokePlus · asistente VGC para Pokémon Champions
 
-Asistente VGC para Pokémon Champions: estadísticas de uso reales (Smogon), calculadora de daño,
-KOs contra el meta y, a partir de una captura de la pantalla de selección de equipo, qué traerá
-y con qué abrirá el rival y qué 4 llevar tú.
+Web responsive para preparar combates de VGC (dobles, traes 6 y eliges 4) en la regulación actual de **Pokémon Champions**.
 
-En producción: https://pokeplus.vercel.app
+## Qué hace
+
+- **Rival**: sube o pega una captura de la pantalla de selección de equipo: se reconocen los 6 del rival (sprite, tipos y sexo) y tus 6 con su objeto, y arriba sale qué 4 llevar y con qué 2 abrir. Para cada rival muestra de un vistazo sus
+  movimientos, objetos, habilidades y repartos de Stat Points más usados, con % reales, su velocidad y la probabilidad
+  de cada forma Mega. Si has guardado tu equipo, recomienda **qué 4 llevar y la lead**, predice la lead del rival y
+  muestra una matriz de enfrentamientos (quién hace OHKO/2HKO a quién y quién es más rápido). Sin equipo, sugiere
+  Pokémon del meta que le ganan a ese equipo.
+- **KO vs meta**: a qué Pokémon del top del meta haces OHKO/2HKO con cada ataque, o al revés, qué amenazas te los hacen a ti.
+- **Calculadora**: calculadora de daño y stats completa (SP, naturaleza, objeto, habilidad, boosts, clima, campo,
+  pantallas, Refuerzo, críticos, ataques de área).
+- **Meta**: ranking de uso con el detalle de cada Pokémon (compañeros y checks/counters incluidos).
+- **Mi equipo**: importa/exporta en formato Showdown o con una lista de nombres.
+
+## Datos y cálculos
+
+- Estadísticas de uso reales de [Smogon](https://www.smogon.com/stats/) (Pokémon Showdown), formato
+  `gen9championsvgc<año>reg<x>` (Bo3 y ladder, rating ≥1760). `scripts/fetch-usage.mjs` detecta el mes y la regulación
+  más recientes y genera `public/data/usage.json`.
+- Se actualizan solas: en cada build de Vercel y con la GitHub Action `update-usage.yml` (los primeros días de cada mes).
+- Daño con [`@smogon/calc`](https://github.com/smogon/damage-calc), el mismo motor que la calculadora de Showdown, con
+  las mecánicas de Champions (nivel 50, 32 SP por stat, 66 en total, Megas).
+- La recomendación de lead es una heurística: combina los cálculos de daño contra los sets más usados del rival,
+  velocidad, roles (Fake Out, Tailwind, Trick Room, redirección, clima, Intimidación) y el uso real.
 
 ## Desarrollo
 
-```sh
+```bash
 npm install
-npm run dev        # descarga estadísticas y sprites (prebuild) y arranca Vite
-npm test           # pruebas (incluye reconocimiento con todo el roster, ~1-2 min)
-MATRIX=1 npx vitest run tests/matrix.test.ts   # matriz completa de reconocimiento (~7 min)
+npm run data   # descarga las estadísticas más recientes
+npm run dev
+npm test
 ```
 
-- `scripts/fetch-usage.mjs`: estadísticas de Smogon → `public/data/usage.json`.
-- `scripts/build-sprite-index.mjs`: atlas de sprites y objetos para el reconocimiento.
-- `src/lib/vision.ts` / `screen.ts`: reconocimiento de capturas; `leads.ts`: predicción del rival;
-  `analysis.ts`: recomendación de tus 4 y la lead.
+## Reconocimiento de capturas
+
+En la pantalla “Selecciona 4 Pokémon para el combate” el juego no muestra los nombres del rival, solo su sprite, sus
+iconos de tipo y su sexo; tu columna muestra tu sprite y el icono de tu objeto. `src/lib/vision.ts` localiza las
+tarjetas rojas (rival) y moradas (tuyas), lee el color de los iconos de tipo y el símbolo de sexo y compara el sprite,
+que el juego dibuja siempre en la misma posición de la tarjeta, con cada sprite de menú del juego (atlas
+`public/data/sprites.png`, 40×40) con una holgura de ±2 píxeles. Los objetos se comparan igual contra
+`public/data/items.png` (24×24); una megapiedra solo se acepta si es de ese Pokémon. Todo ocurre en el navegador; la
+imagen no se sube a ningún sitio.
+
+Si ningún candidato encaja bien (tarjeta desplazada por compresión, reescalado u otra pantalla), se busca el
+desplazamiento en un margen más amplio, y la lectura se marca como dudosa si sigue sin encajar o si los tipos leídos no
+son los de la especie elegida.
+
+Pruebas:
+
+- `tests/vision.test.ts`: tres capturas reales (tal como las decodifica el navegador y sin convertir el color P3).
+- `tests/roster.test.ts`: capturas sintéticas (`tests/synth.ts`) con los 270 Pokémon y los 166 objetos en todos los
+  huecos, y muestras con JPEG, Switch y baja resolución.
+- `MATRIX=1 npx vitest run tests/matrix.test.ts`: matriz completa (9 variantes de dispositivo, ~7 min).
+- `tests/data.test.ts`: cada especie de las estadísticas existe en el calc y tiene sprite.
+
+Las hojas de sprites originales para las pruebas se regeneran con
+`node scripts/build-test-roster.mjs /tmp/champ-sprites`.
+
+Para regenerar los atlas (p. ej. si llegan Pokémon nuevos con una regulación):
+
+```bash
+git clone --depth 1 https://github.com/KevinToodlepoot/pokemon-champions-sprites /tmp/champ-sprites
+npm run sprites -- /tmp/champ-sprites
+```
