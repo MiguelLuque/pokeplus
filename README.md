@@ -1,6 +1,24 @@
 # PokePlus · asistente VGC para Pokémon Champions
 
-Web responsive para preparar combates de VGC (dobles, traes 6 y eliges 4) en la regulación actual de **Pokémon Champions**.
+**Sube la captura de la selección de equipo y en segundos te dice qué 4 llevar, con qué 2 abrir y qué es probable que haga el rival.** Pensado para usarlo desde el móvil durante los ~90 segundos de la previa del combate.
+
+👉 **[pokeplus.vercel.app](https://pokeplus.vercel.app)**: gratis, sin registro. La captura se procesa en tu navegador y no se sube a ningún sitio.
+
+<p align="center">
+  <img src="docs/captura-juego.jpg" alt="Captura del juego: pantalla de selección de 4 Pokémon" width="49%">
+  <img src="docs/app-movil.png" alt="PokePlus en el móvil: plan de combate" width="24%">
+</p>
+<p align="center"><em>De la captura del juego (izquierda) al plan de combate en el móvil (derecha).</em></p>
+
+## Cómo se usa
+
+1. **Guarda tu equipo** una vez en *Mi equipo* (pega el export de Showdown o una lista de nombres).
+2. En la pantalla del juego *“Selecciona 4 Pokémon para el combate”*, haz una captura y **súbela, pégala o arrástrala** en la pestaña *Rival*.
+3. Lee el plan: **Abre con** (tu lead), **Atrás** (los otros 2), la **lead probable del rival** y, para cada uno de sus Pokémon, sus movimientos, objetos y velocidad más habituales.
+
+Si la app no está segura de algún Pokémon u objeto lo marca como *dudoso* para que lo corrijas con un toque.
+
+![PokePlus en escritorio](docs/app-escritorio.png)
 
 ## Qué hace
 
@@ -15,7 +33,7 @@ Web responsive para preparar combates de VGC (dobles, traes 6 y eliges 4) en la 
 - **Meta**: ranking de uso con el detalle de cada Pokémon (compañeros y checks/counters incluidos).
 - **Mi equipo**: importa/exporta en formato Showdown o con una lista de nombres.
 
-## Datos y cálculos
+## De dónde salen los datos
 
 - Estadísticas de uso reales de [Smogon](https://www.smogon.com/stats/) (Pokémon Showdown), formato
   `gen9championsvgc<año>reg<x>` (Bo3 y ladder, rating ≥1760). `scripts/fetch-usage.mjs` detecta el mes y la regulación
@@ -66,3 +84,7 @@ Para regenerar los atlas (p. ej. si llegan Pokémon nuevos con una regulación):
 git clone --depth 1 https://github.com/KevinToodlepoot/pokemon-champions-sprites /tmp/champ-sprites
 npm run sprites -- /tmp/champ-sprites
 ```
+
+## Aviso
+
+Proyecto de fans sin ánimo de lucro, sin relación con Nintendo, Game Freak, Creatures ni The Pokémon Company. Pokémon y sus nombres son marcas de sus respectivos dueños. Los sprites proceden de [KevinToodlepoot/pokemon-champions-sprites](https://github.com/KevinToodlepoot/pokemon-champions-sprites) y las estadísticas de uso de Smogon.
